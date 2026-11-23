@@ -80,6 +80,9 @@ the dir when you rename it. See csess(1) for details.`,
 			return nil
 		},
 	}
+	// 'completion <shell>' still works (packages use it) but isn't listed in
+	// help or offered by tab completion.
+	root.CompletionOptions.HiddenDefaultCmd = true
 	root.PersistentFlags().StringVar(&colorMode, "color", "auto", "color output: auto (when a terminal), on, off")
 	root.RegisterFlagCompletionFunc("color", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return []string{"auto", "on", "off"}, cobra.ShellCompDirectiveNoFileComp

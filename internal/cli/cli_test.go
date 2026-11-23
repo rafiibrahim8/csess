@@ -1054,3 +1054,27 @@ func TestColorArg(t *testing.T) {
 		}
 	}
 }
+
+func TestCompletionCommandHidden(t *testing.T) {
+	a, _ := sandbox(t)
+	run := func(args ...string) string {
+		var out bytes.Buffer
+		cmd := NewRootCmd(func() (claude.Config, error) { return a.cfg, nil }, "test")
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("%q: %v", args, err)
+		}
+		return out.String()
+	}
+	if strings.Contains(run("--help"), "completion") {
+		t.Error("completion listed in help")
+	}
+	if got := run("__complete", ""); strings.Contains(got, "completion") || !strings.Contains(got, "fork") {
+		t.Errorf("tab completion offers:\n%s", got)
+	}
+	if !strings.Contains(run("completion", "fish"), "complete -c csess") {
+		t.Error("completion command no longer works")
+	}
+}
