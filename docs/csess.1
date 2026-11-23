@@ -1,0 +1,345 @@
+.TH CSESS 1 2026-11-23 csess "User Commands"
+.SH NAME
+csess \- list, fork and move Claude Code sessions between directories
+.SH SYNOPSIS
+.B csess ls
+.RB [ \-a | \-\-all ]
+.RI [ dir ]
+.br
+.B csess fork
+.RB [ \-l ]
+.RB [ \-\-no\-memory ]
+.RI [ srcdir " | "
+.B \-s
+.IR id ]
+.I dir
+.br
+.B csess mv
+.RB [ \-n ]
+.I olddir newdir
+.br
+.B csess completion
+.BR bash | zsh | fish | powershell
+.SH DESCRIPTION
+Claude Code ties every session to the directory it was started in.
+Sessions are stored as
+.IP
+.IR $CLAUDE_CONFIG_DIR /projects/ encoded-path / session-id .jsonl
+.PP
+plus an optional
+.IR session-id /
+directory holding subagent transcripts and tool results.
+.I encoded-path
+is the absolute path with every character other than
+.BR a\-z ,
+.B A\-Z
+and
+.B 0\-9
+replaced by
+.BR \- .
+.B claude \-c
+and
+.B claude \-\-resume
+only see the sessions of the current directory, so renaming a directory
+"loses" its sessions.
+.B csess
+lists them, copies them to other directories, and moves them along when a
+directory is renamed.
+.PP
+Because of the encoding, different directories can share a folder name:
+.IR a/b\-c ,
+.I a/b/c
+and
+.I a/b.c
+all become
+.IR \-a\-b\-c .
+.B csess
+tells such sessions apart by the working directory recorded inside each
+transcript.
+.PP
+Options may appear before or after arguments.
+Use
+.B \-\-
+before a directory name that starts with
+.BR \- .
+.SH OPTIONS
+.TP
+.BI \-\-color " auto\fR|\fBon\fR|\fBoff"
+Color the output.
+.B auto
+(the default) colors each of standard output and standard error only when it
+is a terminal, unless
+.B NO_COLOR
+is set or
+.B TERM
+is
+.BR dumb .
+.TP
+.BR \-h ", " \-\-help
+Help for
+.B csess
+or a command.
+.TP
+.B \-\-version
+Print the version.
+.SH COMMANDS
+.SS "ls [\fIdir\fP]"
+List the sessions of
+.I dir
+(default: the current directory), newest first.
+Columns are last modification time, session id and title.
+The title is the name given with
+.BR /rename ,
+else Claude's automatic title, else the last prompt; blank titles are skipped.
+.B *
+marks the session
+.B claude \-c
+would resume.
+A session that shares the folder but was started in another directory is
+shown as
+.BI "[from " dir ]\fR.
+Titles are cut to the terminal width when writing to a terminal.
+.TP
+.BR \-a ", " \-\-all
+Instead, print one line per directory that has sessions: last activity,
+number of sessions, path.
+Directories that share a folder name get a line each.
+.B MISSING
+means the directory no longer exists (deleted, or renamed without
+.BR "csess mv" );
+recover with
+.B csess mv
+after recreating it, or with
+.BR "csess fork \-s" " \fIid newdir\fP."
+Folders holding only Claude's
+.I memory/
+are listed as
+.BR "(memory only)" .
+.SS "fork [\-l] [\-\-no\-memory] [\fIsrcdir\fP | \-s \fIid\fP] \fIdir\fP"
+Copy a session into
+.I dir
+(created, with its parents, if needed) and print the command that resumes
+the copy.
+The session copied is the newest one started in
+.I srcdir
+(default: the current directory), or the one given with
+.BR \-s .
+Right after a fork,
+.B claude \-c
+in
+.I dir
+resumes the copy too, since it is the newest session there.
+The copy gets a new session id, so it never collides with sessions already
+in
+.IR dir ;
+the original session is left untouched.
+Copied along:
+.RS
+.IP \(bu 2
+the transcript, its subagent transcripts and tool results;
+.IP \(bu 2
+the session's scratchpad
+.RI ( /tmp/claude\- uid / folder / id /scratchpad );
+.IP \(bu 2
+the source directory's
+.I memory/
+(it belongs to the directory, not the session), unless
+.B \-\-no\-memory
+is given.
+Symbolic links in it are followed, so the copy shares no files with the
+source.
+If
+.I dir
+already has memory with files that differ, the fork is refused: merge the two
+by hand, or use
+.BR \-\-no\-memory .
+Identical memory is left as is.
+.RE
+.PP
+In the copy's transcripts, the recorded working directory, the directories of
+.B /rewind
+backups, and the paths of tool results, scratchpad and memory files are
+rewritten to the new locations, and the session id is replaced.
+Paths inside Claude's own configuration directory are left alone.
+Tool-result and scratchpad files are copied byte for byte.
+.B /rewind
+checkpoints themselves are not copied.
+Everything is copied under temporary names first, so a failed or interrupted
+fork leaves nothing behind; once the copy is complete it is kept, even if
+starting Claude fails.
+.TP
+.BR \-s ", " \-\-session " \fIid\fP"
+Session to fork, from any directory; a unique prefix of the id is enough.
+Can't be combined with
+.IR srcdir .
+.TP
+.BR \-l ", " \-\-launch
+Start
+.B claude \-\-resume
+on the copy in
+.I dir
+instead of printing the command.
+.TP
+.B \-\-no\-memory
+Don't copy the source directory's
+.IR memory/ .
+.SS "mv [\-n] \fIolddir newdir\fP"
+Rename or move a directory together with everything Claude keys by its path.
+In order:
+.IP 1. 4
+Move
+.I olddir
+to
+.I newdir
+(parent directories are created; moves across filesystems fall back to
+.BR mv (1)).
+.IP 2. 4
+Move the sessions of
+.I olddir
+and of all its subdirectories to the folders Claude expects for their new
+paths.
+If a target folder already exists the sessions are merged into it, directory
+by directory.
+Files that would be overwritten, such as a second
+.IR memory/MEMORY.md ,
+are not: they are moved to
+.IR projects/csess\-conflicts\- YYYYMMDD\-HHMMSS
+and listed, to be merged by hand.
+A folder holding only
+.I memory/
+whose name could also stand for a directory outside
+.I olddir
+is left in place, with a warning.
+Sessions of other directories that share a folder name stay where they are.
+All folders are staged under
+.IR projects/.csess\-mv\- *
+first, so a target name that equals another source's name is handled
+correctly.
+If staging or rewriting fails, everything, including the directory itself, is
+put back.
+.IP 3. 4
+Rewrite the recorded working directories, the directories of
+.B /rewind
+backups, and tool-result paths inside the moved transcripts.
+Modification times are kept, so
+.B claude \-c
+still resumes the same session.
+.IP 4. 4
+Update the up-arrow prompt history
+.RI ( history.jsonl ).
+.IP 5. 4
+Rename the entries for
+.I olddir
+and its subdirectories in
+.I .claude.json
+(trust, allowed tools, local MCP servers, GitHub repository paths), keeping
+the order of keys.
+A symbolic link to
+.I .claude.json
+or
+.I history.jsonl
+is followed and stays a link.
+A backup is written to
+.IR .claude.json.csess\-bak. YYYYMMDD\-HHMMSS
+when anything changes.
+.PP
+Before changing anything,
+.B mv
+checks that every folder it will write to is writable, every transcript is
+readable, and
+.I .claude.json
+parses; otherwise it stops and nothing is changed.
+It also refuses when
+.I newdir
+exists, when
+.I newdir
+is inside
+.IR olddir ,
+when
+.I olddir
+is a symbolic link (move the target, or rename the link with
+.BR mv (1)),
+when
+.I olddir
+contains Claude's own configuration, and when a
+.B claude
+process of the current user is running inside
+.IR olddir .
+.TP
+.BR \-n ", " \-\-dry\-run
+Show which folders would be moved; change nothing.
+.PP
+Not handled: Python virtual environments, git worktrees (run
+.BR "git worktree repair" ),
+and absolute paths inside your own files or
+.IR .claude/settings.local.json .
+Other running Claude sessions may rewrite
+.I .claude.json
+while
+.B mv
+runs; it is safest to run it with Claude closed.
+.SS "completion bash|zsh|fish|powershell"
+Print the tab-completion script for a shell.
+Packages install these system-wide, so normally nothing needs to be done.
+To load it by hand, for example:
+.EX
+source <(csess completion bash)
+csess completion zsh > "${fpath[1]}/_csess"
+csess completion fish > ~/.config/fish/completions/csess.fish
+.EE
+Run
+.B csess completion \fIshell\fP \-\-help
+for details.
+Completions cover commands, options, directories and, for
+.BR "fork \-\-session" ,
+session ids with their titles.
+.SH ENVIRONMENT
+.TP
+.B NO_COLOR
+When set, colors are off unless
+.B \-\-color on
+is given.
+.TP
+.B CLAUDE_CONFIG_DIR
+Claude's configuration directory (default:
+.IR ~/.claude ).
+When set,
+.I .claude.json
+is looked up inside it instead of in
+.IR $HOME .
+.SH FILES
+.TP
+.I ~/.claude/projects/
+Session transcripts, one folder per directory.
+.TP
+.I ~/.claude/history.jsonl
+Up-arrow prompt history.
+.TP
+.I ~/.claude.json
+Per-project settings.
+.SH EXIT STATUS
+0 on success, 1 on any error.
+.SH LIMITATIONS
+Claude truncates folder names longer than 200 characters and appends a hash.
+.B ls
+and
+.B fork
+find such folders by their recorded working directory;
+.B mv
+refuses to create them, and leaves
+.IR memory/ \-only
+folders with hashed names in place, with a warning.
+Paths containing newlines are not supported.
+.SH EXAMPLES
+.EX
+csess ls
+csess ls \-\-all | grep MISSING
+csess fork ../experiment
+csess fork ~/work/api ~/scratch/api\-try
+csess fork \-l \-s 20cb319a ~/scratch/try2
+csess mv \-\-dry\-run ~/work/app ~/work/app\-v2
+csess mv ~/work/app ~/work/app\-v2
+.EE
+.SH SEE ALSO
+.BR claude (1),
+.BR mv (1)

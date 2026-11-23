@@ -1,0 +1,81 @@
+# Push a tag like v0.1.0 and this tests, builds and attaches to a GitHub Release:
+#   csess-<tag>-linux-x86_64.tar.gz    csess-<tag>-linux-aarch64.tar.gz
+#   csess-<tag>-darwin-x86_64.tar.gz   csess-<tag>-darwin-arm64.tar.gz
+#   SHA256SUMS
+# Each tarball holds one directory of the same name with:
+#   csess, man/csess.1, completions/{csess.bash,_csess,csess.fish}, README.md, LICENSE
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CGO_ENABLED: "0"
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+  release:
+    name: Build and publish
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build and package
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          ldflags="-s -w -X main.version=${ver}"
+          mkdir -p assets
+
+          # Completions are the same for every target; generate them with a host build.
+          go build -trimpath -ldflags "$ldflags" -o host-csess ./cmd/csess
+          mkdir -p completions
+          ./host-csess completion bash > completions/csess.bash
+          ./host-csess completion zsh  > completions/_csess
+          ./host-csess completion fish > completions/csess.fish
+
+          # Stamp the man page with this version and date.
+          sed "s/^\.TH CSESS 1 .*/.TH CSESS 1 $(date -u +%F) \"csess ${ver}\" \"User Commands\"/" \
+            docs/csess.1 > csess.1
+
+          # GOOS/GOARCH -> the os-arch names used in the asset file names
+          for target in linux/amd64:linux-x86_64 linux/arm64:linux-aarch64 \
+                        darwin/amd64:darwin-x86_64 darwin/arm64:darwin-arm64; do
+            goos="${target%%/*}"; rest="${target#*/}"; goarch="${rest%%:*}"; name="${rest#*:}"
+            dir="csess-${tag}-${name}"
+            mkdir -p "$dir/man" "$dir/completions"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "$ldflags" -o "$dir/csess" ./cmd/csess
+            install -m 0644 csess.1 "$dir/man/"
+            install -m 0644 completions/* "$dir/completions/"
+            install -m 0644 README.md LICENSE "$dir/"
+            tar czf "assets/$dir.tar.gz" "$dir"
+          done
+
+          cd assets && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          files: assets/*
+          generate_release_notes: true
